@@ -8,7 +8,7 @@ import json
 from dotenv import load_dotenv
 load_dotenv()
 
-from utils import json_deserializer
+# from utils import json_deserializer # dataflow fails because it cannot import this dependencies
 
 
 
@@ -108,12 +108,14 @@ def dynamic_insert_to_bq(event):
 
 pipeline_options = PipelineOptions(
     project=project_id,
-    job_name="python_pubsub_to_bq_dynamic_table", 
+    job_name="python-pubsub-to-bq-dynamic-table", 
     save_main_session=True, 
     streaming=True
-    # , runner='DataFlowRunner',
-    # staging_location="gs://demo-storage-bucket-401116/dataflow_temp",
-    # temp_location="gs://demo-storage-bucket-401116/dataflow_temp", region="europe-west2"
+    , runner='DataFlowRunner',
+    staging_location="gs://demo-storage-bucket-401116/dataflow_temp",
+    temp_location="gs://demo-storage-bucket-401116/dataflow_temp", region="europe-west2",
+    requirements_file = "requirements.txt",
+    setup_file = "src/setup.py"
 )
 
 
@@ -121,7 +123,9 @@ def run():
     pipeline = beam.Pipeline(options=pipeline_options)
 
     read_from_pubsub = pipeline | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(subscription=f"projects/{project_id}/subscriptions/{subscription_name}") #projects/<project>/subscriptions/<subscription>
-    parse_messages = read_from_pubsub | "Parse to JSON" >> beam.Map(json_deserializer)
+    # parse_messages = read_from_pubsub | "Parse to JSON" >> beam.Map(json_deserializer) # commented out because of json_deserializer import issues
+    parse_messages = read_from_pubsub | "Parse to JSON" >> beam.Map(lambda x: json.loads(x.decode('utf-8')))
+
 
     # write_to_bq = parse_messages | "Write to BigQuery Table" >> beam.io.WriteToBigQuery(table = lambda row: row['tablename'],
     #                                                                         schema = lambda table, schema_coll : schema_coll[table],

@@ -68,7 +68,7 @@ resource "google_storage_bucket" "demo-storage-bucket" {
 resource "google_bigquery_dataset" "demo-gbq-dataset" {
   # name only allows underscore
   dataset_id = "demo_gbq_dataset"
-  delete_contents_on_destroy = true
+  # delete_contents_on_destroy = true
 }
 
 # # Google Big Query Table (depends on GBQ dataset)

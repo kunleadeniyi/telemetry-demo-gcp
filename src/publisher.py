@@ -5,7 +5,7 @@ import random
 import time
 import os
 
-
+import asyncio
 
 # pub sub section
 from google.cloud import pubsub_v1
@@ -27,26 +27,10 @@ def publish(table_name, event):
     # time.sleep(1)
     # print(data)
 
-
-
-if __name__ == "__main__":
-
-    # max = 200
-    # i = 0
-    # while i < max:
-    #     player = Gameplay()
-    #     # message = wrap_data("users", dummy_data)
-    #     message = wrap_data(table_name="player", data=player.player_data)
-    #     data = json_serializer(message)
-    #     pubsub_response = publisher.publish(topic_path, data)
-    #     print(pubsub_response)
-    #     # print(data)
-    #     time.sleep(1)
-    #     i += 1
-
+async def generate_data():
     player = Gameplay()
     publish(table_name="player", event=player.player_data)
-    num_sessions = 40
+    num_sessions = random.randint(30, 75)
     for i in range(num_sessions):
         game_session = player.create_game_session()
         # print(game_session)
@@ -56,8 +40,17 @@ if __name__ == "__main__":
         # print(game_progression)
         publish(table_name="progression", event=game_progression)
 
+async def main():
+    tel_task1 = asyncio.create_task(generate_data())
+    tel_task2 = asyncio.create_task(generate_data())
+    tel_task3 = asyncio.create_task(generate_data())
+    tel_task4 = asyncio.create_task(generate_data())
+    tel_task5 = asyncio.create_task(generate_data())
 
-# not working because of schema issues
+if __name__ == "__main__":
+
+    while True:
+        asyncio.run(main())
 
 # TO DO
 # move project id and topic name to env file

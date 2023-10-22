@@ -113,8 +113,7 @@ pipeline_options = PipelineOptions(
     streaming=True
     # , runner='DataFlowRunner',
     # staging_location="gs://demo-storage-bucket-401116/dataflow_temp",
-    # temp_location="gs://demo-storage-bucket-401116/dataflow_temp", 
-    # region="europe-west2"
+    # temp_location="gs://demo-storage-bucket-401116/dataflow_temp", region="europe-west2"
 )
 
 

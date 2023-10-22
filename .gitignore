@@ -5,4 +5,4 @@
 credentials.json
 credentials_developer_ayok.json
 venv/
-src/__pycache__
+src/__pycache__/

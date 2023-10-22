@@ -1,5 +1,4 @@
 from utils import json_serializer, wrap_data
-from utils import create_player
 # from faker import Faker
 from game_events import Gameplay
 import random

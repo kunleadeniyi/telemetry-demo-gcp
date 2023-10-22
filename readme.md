@@ -1,0 +1,1 @@
+python src/dataflow_write_to_big_query.py --project_id "idyllic-web-401116" --output_table "idyllic-web-401116.demo-gbq-dataset.demo-gbq-dataset-invalid-table"

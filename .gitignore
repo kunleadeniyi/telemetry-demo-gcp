@@ -1,0 +1,7 @@
+*tfstate*
+.terraform/*
+.env
+.terraform.lock.hcl
+credentials.json
+credentials_developer_ayok.json
+venv/

@@ -5,12 +5,11 @@ import datetime
 
 import math
 
-
 fake = Faker()
 
 
 class Gameplay():
-    
+
     def __init__(self) -> None:
         player = self._create_player()
         self.player_id = player["player_id"]
@@ -39,31 +38,34 @@ class Gameplay():
 
         # player data
         self.player_data = player
-    def _create_player(self, level=1, points=500, coins=10, xp=1, platform="PC", region="Europe"):
+
+    @staticmethod
+    def _create_player(level=1, points=500, coins=10, xp=1, platform="PC", region="Europe"):
         return {
-        "player_id": str(uuid.uuid4()),
-        "username": fake.name().split(' ')[0],
-        "first_name": fake.name().split(' ')[0],
-        "last_name": fake.name().split(' ')[1],
-        "email": fake.email(),
-        "level": level,
-        "points": points,
-        "coins": coins,
-        "xp": xp,
-        "created_at": datetime.datetime.now().timestamp(),
-        "last_login_date": datetime.date.today().strftime("%d-%m-%Y"),
-        "platform": platform,
-        "region": region
+            "player_id": str(uuid.uuid4()),
+            "username": fake.name().split(' ')[0],
+            "first_name": fake.name().split(' ')[0],
+            "last_name": fake.name().split(' ')[1],
+            "email": fake.email(),
+            "level": level,
+            "points": points,
+            "coins": coins,
+            "xp": xp,
+            "created_at": datetime.datetime.now().timestamp(),
+            "last_login_date": datetime.date.today().strftime("%d-%m-%Y"),
+            "platform": platform,
+            "region": region
         }
 
-    def _random_game_mode(self):
+    @staticmethod
+    def _random_game_mode():
         game_mode_list = ['single-player', 'co-op', 'multiplayer']
-        game_mode = game_mode_list[random.randint(0, len(game_mode_list)-1 )]
+        game_mode = game_mode_list[random.randint(0, len(game_mode_list) - 1)]
         return game_mode
-    
-    def _compute_level(self):
-        return math.floor(math.log(self.xp,2))
 
+    @staticmethod
+    def _compute_level(self):
+        return math.floor(math.log(self.xp, 2))
 
     def create_game_session(self):
         # creates a session that has a beginning time, end time, player id, game mode, session id
@@ -77,16 +79,16 @@ class Gameplay():
         return {
             "session_id": session_id,
             "player_id": self.player_id,
-            "start_time": start_time.timestamp(), 
+            "start_time": start_time.timestamp(),
             "end_time": end_time.timestamp(),
             "game_mode": self._random_game_mode()
         }
 
-    def log_player_progession(self):
+    def log_player_progression(self):
         # modify player level, coins, xp, points and return new and previous values and session id when changes happened
-        new_points = self._previous_points + random.randint(50,100)
-        new_xp = self._previous_xp + random.randint(3,100)
-        new_coins = self._previous_coins + random.randint(1,5)
+        new_points = self._previous_points + random.randint(50, 100)
+        new_xp = self._previous_xp + random.randint(3, 100)
+        new_coins = self._previous_coins + random.randint(1, 5)
         new_level = self._compute_level()
 
         # update previous values
@@ -114,13 +116,17 @@ class Gameplay():
             "current_level": self.level
         }
 
-    def create_game_event(self):
+    @staticmethod
+    def _create_game_event(self, event_name: str, data: dict):
         # event name, event id, event type, player id, session id, timestamp of event
-        pass
+        game_event = data
+        game_event["event_name"] = event_name
+        return game_event
 
     def update_leaderboard(self):
         # return current player points and level
         pass
+
 
 def create_game_assets():
     pass
@@ -149,12 +155,13 @@ create multiple player sessions
 I want to generate data and publish it for a user so that i can call it numerous times asynchronously to simulate telemetry for different players
 or write a wrapper for publishing data
 """
+
+
 def generate_telemetry_per_user():
     i = 0
     while i < 5:
         print(i)
         i += 1
-
 
 
 if __name__ == "__main__":
@@ -170,7 +177,5 @@ if __name__ == "__main__":
         # print(game_play.xp)
         game_progression = game_play.log_player_progession()
         print(game_progression)
-
-
 
     # print(math.floor(compute_level(15)))

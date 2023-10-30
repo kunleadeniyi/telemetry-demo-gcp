@@ -2,14 +2,15 @@ import apache_beam as beam # strip down to only the modules you need
 
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.options.pipeline_options import GoogleCloudOptions
-
+from table_schema import bigquery_table_schemas
+from google.cloud import bigquery
+import datetime
 import os
 import json
 from dotenv import load_dotenv
 load_dotenv()
 
 # from utils import json_deserializer # dataflow fails because it cannot import this dependencies
-
 
 
 credential_path = os.getenv("CREDENTIAL_PATH")
@@ -19,13 +20,6 @@ subscription_name = os.getenv("INPUT_SUB")
 
 # auth to google
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
-
-# schema def file
-# schema_def_file = "/Users/ayokunle/Documents/mylab/terraform/telemetry-demo-gcp/src/schema.json"
-
-from table_schema import bigquery_table_schemas
-from google.cloud import bigquery
-import datetime
 
 field_type = {
         str: 'STRING',
@@ -39,16 +33,14 @@ field_type = {
         dict: 'RECORD',
 }
 
+
 # Function to take a dictionary and return a bigquery schema
 # https://stackoverflow.com/questions/56079925/autogenerating-bigquery-schema-from-python-dictionary
 def map_dict_to_bq_schema(source_dict):
-
     # SchemaField list
     schema = []
-
     # Iterate the existing dictionary
     for key, value in source_dict.items():
-
         try:
             schemaField = bigquery.SchemaField(key, field_type[type(value)]) # NULLABLE BY DEFAULT
         except KeyError:
@@ -86,9 +78,10 @@ def dynamic_insert_to_bq(event):
 
     dataset_id = bigquery_dataset
     table_id = f"{dataset_id}.{table_name}"
+    table_ref = bq_client.dataset(dataset_id).table(table_name)
 
     try:
-        table_ref = bq_client.dataset(dataset_id).table(table_name)
+        # table_ref = bq_client.dataset(dataset_id).table(table_name)
         bq_client.get_table(table_ref)
     except Exception as e:
         # print(bigquery_table_schemas[table_name])
@@ -101,9 +94,6 @@ def dynamic_insert_to_bq(event):
         bq_client.insert_rows_json(table_id, [data])
     except Exception as e:
         print(f"Error while inserting into table {e}")
-
-
-
 
 
 pipeline_options = PipelineOptions(
@@ -122,21 +112,20 @@ pipeline_options = PipelineOptions(
 def run():
     pipeline = beam.Pipeline(options=pipeline_options)
 
-    read_from_pubsub = pipeline | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(subscription=f"projects/{project_id}/subscriptions/{subscription_name}") #projects/<project>/subscriptions/<subscription>
-    # parse_messages = read_from_pubsub | "Parse to JSON" >> beam.Map(json_deserializer) # commented out because of json_deserializer import issues
+    # subscription format -> projects/<project>/subscriptions/<subscription>
+    read_from_pubsub = (
+            pipeline | "Read from Pub/Sub"
+            >> beam.io.ReadFromPubSub(subscription=f"projects/{project_id}/subscriptions/{subscription_name}"))
+
+    # parse_messages = read_from_pubsub | "Parse to JSON"
+    # >> beam.Map(json_deserializer) # commented out because of json_deserializer import issues, replaced with line below
     parse_messages = read_from_pubsub | "Parse to JSON" >> beam.Map(lambda x: json.loads(x.decode('utf-8')))
-
-
-    # write_to_bq = parse_messages | "Write to BigQuery Table" >> beam.io.WriteToBigQuery(table = lambda row: row['tablename'],
-    #                                                                         schema = lambda table, schema_coll : schema_coll[table],
-    #                                                                         schema_side_inputs=(schema_coll,),
-    #                                                                         create_disposition='CREATE_IF_NEEDED',
-    #                                                                         write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND)
 
     write_to_bq = parse_messages | "Write to BigQuery Table" >> beam.ParDo(dynamic_insert_to_bq)
     parse_messages | beam.Map(print)
 
     pipeline.run().wait_until_finish()
+
 
 if __name__ == "__main__":
     run()
@@ -150,5 +139,4 @@ if __name__ == "__main__":
     #           'location_lon': 41
     #           }
     # }
-
     # dynamic_insert_to_bq(event=event)

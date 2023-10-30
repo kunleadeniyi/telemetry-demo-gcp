@@ -1,22 +1,23 @@
 from utils import json_serializer, wrap_data
-# from faker import Faker
 from game_events import Gameplay
+from dotenv import load_dotenv
 import random
 import time
 import os
-
 import asyncio
 
 # pub sub section
 from google.cloud import pubsub_v1
 
-credential_path = "/Users/ayokunle/Documents/mylab/terraform/telemetry-demo-gcp/credentials.json"
+load_dotenv()
+credential_path = os.getenv("CREDENTIAL_PATH")
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
 
 publisher = pubsub_v1.PublisherClient()
 topic_path = publisher.topic_path("idyllic-web-401116", "demo-valid-data")
 
-# creata a fuctino to create a player, and generate some events and progression 
+
+# create a function to create a player, and generate some events and progression
 # run it concurrently multiple times
 
 def publish(table_name, event):
@@ -27,6 +28,7 @@ def publish(table_name, event):
     # time.sleep(1)
     # print(data)
 
+
 async def generate_data():
     player = Gameplay()
     publish(table_name="player", event=player.player_data)
@@ -36,9 +38,10 @@ async def generate_data():
         # print(game_session)
         publish(table_name="sessions", event=game_session)
         # print(game_play.xp)
-        game_progression = player.log_player_progession()
+        game_progression = player.log_player_progression()
         # print(game_progression)
         publish(table_name="progression", event=game_progression)
+
 
 async def main():
     tel_task1 = asyncio.create_task(generate_data())
@@ -46,6 +49,7 @@ async def main():
     tel_task3 = asyncio.create_task(generate_data())
     tel_task4 = asyncio.create_task(generate_data())
     tel_task5 = asyncio.create_task(generate_data())
+
 
 if __name__ == "__main__":
 

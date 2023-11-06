@@ -1,6 +1,7 @@
 provider "google" {
   credentials = "${file("credentials.json")}"
-  project = "idyllic-web-401116"
+#   project = "idyllic-web-401116"
+  project = "gcp-demo-telemetry"
   region = "europe-west2"
 }
 
@@ -47,21 +48,28 @@ resource "google_pubsub_topic" "demo-invalid-data" {
   name = "demo-invalid-data"
 }
 
-# Subsrciptions for pub sub
+# Subscriptions for valid topic pub sub
 resource "google_pubsub_subscription" "demo-valid-data-sub" {
   name = "demo-valid-data-sub"
   topic = google_pubsub_topic.demo-valid-data.name
 }
 
-# Subsrciptions for pub sub
+# Subscriptions for valid topic pub sub
 resource "google_pubsub_subscription" "demo-default-valid-data-sub" {
   name = "demo-default-valid-data-sub"
   topic = google_pubsub_topic.demo-valid-data.name
 }
 
+# Subscriptions for invalid topic pub sub
+resource "google_pubsub_subscription" "demo-default-invalid-data-sub" {
+  name = "demo-default-invalid-data-sub"
+  topic = google_pubsub_topic.demo-invalid-data.name
+}
+
 # Google cloud storage
 resource "google_storage_bucket" "demo-storage-bucket" {
-  name = "demo-storage-bucket-401116"
+#   name = "demo-storage-bucket-401116"
+  name = "demo-gcp-telemetry-storage-bucket"
   location = "europe-west2"
 }
 

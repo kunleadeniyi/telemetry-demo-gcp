@@ -63,6 +63,11 @@ class Gameplay():
         game_mode = game_mode_list[random.randint(0, len(game_mode_list) - 1)]
         return game_mode
 
+    def _random_game_map(self):
+        game_map_list = ['Gulag', 'Rust', 'MarioCamp', 'ShipWreck']
+        game_map = game_map_list[random.randint(0, len(game_map_list) - 1)]
+        return game_map
+
     @staticmethod
     def _compute_level(self):
         return math.floor(math.log(self.xp, 2))
@@ -73,7 +78,7 @@ class Gameplay():
         end_time = start_time + datetime.timedelta(minutes=(random.randint(3, 15)))
         session_id = str(uuid.uuid1())
 
-        # set current sesssion internal property
+        # set current session internal property
         self._current_session = session_id
 
         return {
@@ -81,7 +86,8 @@ class Gameplay():
             "player_id": self.player_id,
             "start_time": start_time.timestamp(),
             "end_time": end_time.timestamp(),
-            "game_mode": self._random_game_mode()
+            "game_mode": self._random_game_mode(),
+            "game_map": self._random_game_map() # adding this might break the etl to bigquery  due to schema issues
         }
 
     def log_player_progression(self):
@@ -113,7 +119,8 @@ class Gameplay():
             "previous_coins": self._previous_coins,
             "current_coins": self.coins,
             "previous_level": self._previous_level,
-            "current_level": self.level
+            "current_level": self.level,
+            "timestamp": datetime.datetime.now().timestamp()  # adding this might break the etl to bigquery  due to schema issues
         }
 
     @staticmethod
@@ -122,6 +129,30 @@ class Gameplay():
         game_event = data
         game_event["event_name"] = event_name
         return game_event
+
+    def track_location(self):
+        # event id, event type, player id, session id, timestamp of event
+        session_id = self._current_session
+        player_id = self.player_id
+        event_id = str(uuid.uuid1())
+        timestamp = datetime.datetime.now().timestamp()
+        location = {
+            "x_coord": random.randint(0, 1000),
+            "y_coord": random.randint(0, 1000),
+            "z_coord": random.randint(0, 400)
+        }
+        game_mode = self._random_game_mode()
+        game_map = self._random_game_map()
+
+        return {
+            "session_id": session_id,
+            "player_id": player_id,
+            "event_id": event_id,
+            "game_mode": game_mode,
+            "game_map": game_map,
+            "location": location,
+            "timestamp": timestamp
+        }
 
     def update_leaderboard(self):
         # return current player points and level
@@ -166,7 +197,7 @@ def generate_telemetry_per_user():
 
 if __name__ == "__main__":
     game_play = Gameplay()
-    print((game_play.player_data))
+    print(game_play.player_data)
     # print(game_play.player_id)
     # print(game_play._random_game_mode())
 
@@ -175,7 +206,7 @@ if __name__ == "__main__":
         game_session = game_play.create_game_session()
         print(game_session)
         # print(game_play.xp)
-        game_progression = game_play.log_player_progession()
+        game_progression = game_play.log_player_progression()
         print(game_progression)
 
     # print(math.floor(compute_level(15)))

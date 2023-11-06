@@ -2,8 +2,7 @@
 .terraform/*
 .env
 .terraform.lock.hcl
-credentials.json
-credentials_developer_ayok.json
+credentials*.json
 venv/
 src/__pycache__/
 src/dataflow_pipeline_dependencies.egg-info/

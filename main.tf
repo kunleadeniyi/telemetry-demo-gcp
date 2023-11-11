@@ -79,6 +79,60 @@ resource "google_bigquery_dataset" "demo-gbq-dataset" {
   # delete_contents_on_destroy = true
 }
 
+# BigQuery Provision for invalid data
+# https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_subscription#example-usage---pubsub-subscription-push-bq
+resource "google_bigquery_dataset" "demo-gbq-invalid-dataset" {
+  dataset_id = "demo_gbq_invalid_dataset"
+}
+
+resource "google_bigquery_table" "demo-gbq-invalid-dataset-error-table" {
+  dataset_id = google_bigquery_dataset.demo-gbq-invalid-dataset.dataset_id
+  table_id = "errors"
+
+  schema = <<EOF
+  [
+      {
+          "name": "data",
+          "type": "STRING"
+      },
+      {
+          "name": "error",
+          "type": "STRING"
+      },
+      {
+          "name": "timestamp",
+          "type": "STRING"
+      }
+  ]
+  EOF
+}
+
+data "google_project" "project" {
+}
+
+resource "google_project_iam_member" "viewer" {
+  project = data.google_project.project.project_id
+  role   = "roles/bigquery.metadataViewer"
+  member = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "editor" {
+  project = data.google_project.project.project_id
+  role   = "roles/bigquery.dataEditor"
+  member = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+}
+
+# pubsub push to bigquery
+resource "google_pubsub_subscription" "demo-push-invalid-data-to-bq" {
+  name = "demo-push-invalid-data-to-bq"
+  topic = google_pubsub_topic.demo-invalid-data.name
+
+  bigquery_config {
+    table = "${data.google_project.project.project_id}.${google_bigquery_table.demo-gbq-invalid-dataset-error-table.dataset_id}.${google_bigquery_table.demo-gbq-invalid-dataset-error-table.table_id}"
+  }
+
+  depends_on = [google_project_iam_member.viewer, google_project_iam_member.editor]
+}
 # # Google Big Query Table (depends on GBQ dataset)
 # # valid table
 # resource "google_bigquery_table" "demo-gbq-dataset-valid-table" {

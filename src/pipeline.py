@@ -14,7 +14,6 @@ load_dotenv()
 
 # from utils import json_deserializer # dataflow fails because it cannot import this dependencies
 
-
 credential_path = os.getenv("CREDENTIAL_PATH")
 project_id = os.getenv("PROJECT_ID")
 bigquery_dataset = os.getenv("GBQ_DATASET")
@@ -39,13 +38,14 @@ field_type = {
 }
 
 # global BQ client
-bq_client = bigquery.Client()
+# bq_client = bigquery.Client() # Had to declare locally to avoid _pickle.PicklingError
+# https://cloud.google.com/dataflow/docs/guides/common-errors (NameError Section)
 
 # pipeline options
 pipeline_options = PipelineOptions(
     project=project_id,
     job_name="python-pubsub-to-bq-dynamic-table",
-    # save_main_session=True,
+    save_main_session=True,
     streaming=True
     # , runner='DataFlowRunner',
     # staging_location=f"gs://{gcp_bucket}/dataflow_staging",
@@ -82,12 +82,11 @@ def map_dict_to_bq_schema(source_dict):
 
 def check_schema(bigquery_schema: list, elem_schema: list):
     output = False
-    # output = True
     if bigquery_schema == elem_schema:
         output = True
         return output
 
-    print(f"ELEM SCHEMA: {elem_schema} \n type: {type(elem_schema)}")
+    # print(f"ELEM SCHEMA: {elem_schema} \n type: {type(elem_schema)}")
     if set(elem_schema).issubset(bigquery_schema):
         output = True
         return output
@@ -97,7 +96,7 @@ def check_schema(bigquery_schema: list, elem_schema: list):
 
 def check_table_exists(table_name):
     try:
-        # bq_client = bigquery.Client()
+        bq_client = bigquery.Client()
         dataset_id = bigquery_dataset
         table_id = f"{dataset_id}.{table_name}"
         table = bq_client.get_table(table_id)
@@ -108,13 +107,80 @@ def check_table_exists(table_name):
 
 
 def generate_updated_schema(existing_schema, new_schema):
-    updated_schema = existing_schema + list(set(new_schema) - set(existing_schema))
-    return updated_schema
+    # Convert lists to tuples
+    existing_schema = tuple(existing_schema)
+    new_schema = tuple(new_schema)
+
+    # updated_schema = existing_schema + list(set(new_schema) - set(existing_schema))
+    updated_schema = existing_schema + tuple(set(new_schema) - set(existing_schema))
+    return list(updated_schema)
 
 
 # def schema_is_subset(existing_schema, new_schema):
+schema_cache = {}
 
 class Branch(beam.DoFn):
+
+    def __init__(self):
+        self.schema_cache = {}
+
+    def map_inner_record_to_bq_schema(self, nested_record):
+        schema = []
+        # Iterate the existing dictionary
+        for key, value in nested_record.items():
+            try:
+                schema_field = bigquery.SchemaField(key, field_type[type(value)])  # NULLABLE BY DEFAULT
+            except KeyError:
+                # We are expecting a REPEATED field
+                if value and len(value) > 0:
+                    schema_field = bigquery.SchemaField(key, field_type[type(value[0])], mode='REPEATED')  # REPEATED
+
+            # Add the field to the list of fields
+            schema.append(schema_field)
+
+        # Return the dictionary values
+        return tuple(schema)
+
+    def map_dict_to_bq_schema(self, element):
+        # SchemaField list
+        schema = []
+        # Iterate the existing dictionary
+        for key, value in element['data'].items():
+            try:
+                schema_field = bigquery.SchemaField(key, field_type[type(value)])  # NULLABLE BY DEFAULT
+            except KeyError:
+                # We are expecting a REPEATED field
+                if value and len(value) > 0:
+                    schema_field = bigquery.SchemaField(key, field_type[type(value[0])], mode='REPEATED')  # REPEATED
+
+            # Add the field to the list of fields
+            schema.append(schema_field)
+
+            # If it is a STRUCT / RECORD field we start the recursion
+            if schema_field.field_type == 'RECORD':
+                schema_field._fields = self.map_inner_record_to_bq_schema(value)
+
+        # Return the dictionary values
+        table_name = element['table_name']
+        # schema_cache[table_name] = schema
+        self.schema_cache[table_name] = schema
+        return schema
+
+    # def check_schema(self, bigquery_schema: list, elem_schema: list):
+    #     output = False
+    #     # output = True
+    #     if bigquery_schema == elem_schema:
+    #         output = True
+    #         return output
+    #
+    #     # print(f"ELEM SCHEMA: {elem_schema} \n type: {type(elem_schema)}")
+    #     if set(elem_schema).issubset(bigquery_schema):
+    #         # if all(x in bigquery_schema for x in elem_schema):
+    #         output = True
+    #         return output
+    #
+    #     return output
+
     def process(self, element):
         # edge case
         if (element.get("table_name") is None) or (element.get("data") is None):
@@ -127,24 +193,28 @@ class Branch(beam.DoFn):
             # print(table_name)
             table_object = check_table_exists(table_name)
             if table_object is not None:  # the table exists branch to either insert record or update schema then insert
+                # self.schema_cache[table_name] = table_object.schema
                 # yield pvalue.TaggedOutput(tag='table_exist', value=element)
-                schema_check = check_schema(table_object.schema, map_dict_to_bq_schema(data))  # return bool
+                # schema_check = self.check_schema(table_object.schema, map_dict_to_bq_schema(data))  # return bool
+                schema_check = table_object.schema == schema_cache.get(table_name)
+                # schema_check = table_object.schema == self.schema_cache.get(table_name)
+
                 if schema_check:
                     # element['full_table_id'] = table_object.full_table_id
                     element['table'] = table_object
                     yield pvalue.TaggedOutput(tag='okay_table_branch', value=element)
                 elif not schema_check:
                     # print("Modifying and attaching schema to element with key 'new_schema' ")
-                    new_schema = map_dict_to_bq_schema(data)
+                    # new_schema = map_dict_to_bq_schema(data)
+                    new_schema = self.map_dict_to_bq_schema(element)
+                    schema_cache[table_name] = new_schema
                     element['new_schema'] = new_schema
                     element['table'] = table_object
                     yield pvalue.TaggedOutput(tag='modify_table_branch', value=element)
             else:  # create table
                 # print("Create table")
+                self.schema_cache[table_name] = map_dict_to_bq_schema(data)
                 yield pvalue.TaggedOutput(tag='create_table_branch', value=element)
-
-                # yield (table_name, data)
-                # yield pvalue.TaggedOutput(plant['name'], plant)
 
 
 class CreateTable(beam.DoFn):
@@ -152,6 +222,8 @@ class CreateTable(beam.DoFn):
         table_id = f"{project_id}.{bigquery_dataset}.{element['table_name']}"
         schema = map_dict_to_bq_schema(element['data'])
         table = bigquery.Table(table_id, schema=schema)
+
+        bq_client = bigquery.Client()
 
         try:
             table = bq_client.create_table(table)
@@ -169,6 +241,8 @@ class InsertToBQ(beam.DoFn):
         # full_table_id = element['full_table_id']
         table_id = f"{element['table'].dataset_id}.{element['table'].table_id}"
         data = element['data']
+
+        bq_client = bigquery.Client()
         try:
             # bq_client.insert_rows_json(full_table_id, [data])
             bq_client.insert_rows_json(table_id, [data])
@@ -180,15 +254,41 @@ class InsertToBQ(beam.DoFn):
 
 
 class ModifyTable(beam.DoFn):
+    def generate_updated_schema(self, existing_schema, new_schema):
+        # Convert SchemaField objects to a hashable form (e.g., tuples)
+        existing_schema_set = set((field.name, field.field_type, field.mode) if field.field_type != 'RECORD' else (
+        field.name, field.field_type, field.mode, tuple(field.fields)) for field in existing_schema)
+        new_schema_set = set((field.name, field.field_type, field.mode) if field.field_type != 'RECORD' else (
+        field.name, field.field_type, field.mode, tuple(field.fields)) for field in new_schema)
+
+        # Create updated schema by combining existing schema and new schema
+        updated_schema_set = existing_schema_set.union(new_schema_set)
+
+        # Convert the hashable form back to SchemaField objects
+        updated_schema_objects = []
+        for field_info in updated_schema_set:
+            if field_info[1] == 'RECORD':
+                updated_schema_objects.append(
+                    bigquery.SchemaField(field_info[0], 'RECORD', field_info[2], fields=field_info[3]))
+            else:
+                updated_schema_objects.append(bigquery.SchemaField(*field_info[:3]))
+
+        return updated_schema_objects
+
     def process(self, element):
         table = element['table']
         existing_schema = table.schema
-        new_schema = element['new_schema']
-        modified_schema = generate_updated_schema(existing_schema, new_schema)
-
+        # new_schema = element['new_schema']
+        new_schema = element.get('new_schema')
+        # modified_schema = generate_updated_schema(existing_schema, new_schema)
+        modified_schema = self.generate_updated_schema(existing_schema, new_schema)
         table.schema = modified_schema
+
+        # schema_cache[table.table_id] = table.schema
+
+        bq_client = bigquery.Client()
         table = bq_client.update_table(table, ['schema'])
-        print(existing_schema == new_schema)
+        print(f"ModifyTable DoFn Schema check: {existing_schema == new_schema}")
         print(existing_schema)
         print(new_schema)
 
@@ -281,23 +381,30 @@ class ModifyTable(beam.DoFn):
 #     pipeline.run().wait_until_finish()
 
 def run():
+    # with beam.Pipeline(options=pipeline_options) as pipeline:
     pipeline = beam.Pipeline(options=pipeline_options)
-    # branches = (
-    #         pipeline
-    #         | 'Input data' >> beam.Create([
-    #     {'data': {'name': 'Strawberry', 'season': 2}},  # April, 2020
-    #     {'table_name': 'veggies', 'data': {'name': 'Carrot', 'season': 3}},  # June, 2020
-    #     {'table_name': 'test_assets', 'data': {'name': 'Artichoke', 'season': 4}},  # March, 2020
-    #     {'table_name': 'veggies', 'data': {'name': 'Tomato', 'season': 5}},  # May, 2020
-    #     {'table_name': 'veggies', 'data': {'name': 'Potato', 'season': 6}},  # September, 2020
-    #     # event
-    # ])
-    # )
 
-    branches = (
+    parsed_data = (
         pipeline
         | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(subscription=f"projects/{project_id}/subscriptions/{subscription_name}")
         | "Parse to JSON" >> beam.Map(lambda x: json.loads(x.decode('utf-8')))
+    )
+
+    # experimenting with dynamic destinations
+    # def table_fn(element):
+    #     return f"{project_id}:{bigquery_dataset}.{element['table_name']}"
+    #
+    # parsed_data | 'WriteWithDynamicDestination' >> beam.io.WriteToBigQuery(
+    #     table_fn,
+    #     schema=lambda x: convert_to_beam_schema(x),
+    #     # table_side_inputs=(,),
+    #     write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
+    #     create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
+    #     method='STREAMING_INSERTS'
+    # )
+
+    branches = (
+        parsed_data
         | 'Tagged branches' >> beam.ParDo(Branch()).with_outputs()  # .with_outputs("a", "b")
         # | beam.Map(print)
     )
@@ -334,38 +441,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-
-    event = {
-        'table_name': 'test_player',
-        'data': {
-             'player_id': 'qwertyuiop',
-             'username': 'jd', 'first_name': 'John',  'last_name': 'Doe',
-             'email': 'campbelljuan@example.com', 'level': 1, 'points': 500, 'coins': 10,
-             'xp': 1, 'created_at': 1699103979.483098, 'last_login_date': '04-11-2023',
-             'platform': 'PC', 'region': 'Europe', 'source': 'Steam'
-             }
-        }
-
-    # with beam.Pipeline() as pipeline:
-
-    # event = {'table_name': 'users',
-    #  'data': {'session_id': 13345021569,
-    #           'first_name': 'Thomas',
-    #           'last_name': 'Brock',
-    #           'address': '02785 Brooke Club\nSmithville, KS 26651',
-    #           'location_lat': 13,
-    #           'location_lon': 41
-    #           }
-    # }
-
-    #
-    # print(check_schema(table_name="test_players", source_dict=event))
-    # dynamic_insert_to_bq(event=event)
-
-
-# to add
-# 1. add ingest/process_timestamp to each entry in the pipeline
-# 2. modify schema on the go as another branch of the pipeline
-# 3. test arrays
-# 4. test json
-# 5. partition by day

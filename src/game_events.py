@@ -68,7 +68,7 @@ class Gameplay():
         game_map = game_map_list[random.randint(0, len(game_map_list) - 1)]
         return game_map
 
-    @staticmethod
+
     def _compute_level(self):
         return math.floor(math.log(self.xp, 2))
 
@@ -158,9 +158,21 @@ class Gameplay():
         # return current player points and level
         pass
 
+    def create_game_assets(self):
+        skin_list = ["Ghost", "Spongebob", "SpookyFest", "Unknown Gunman", "21 Savage", "Siege"]
+        operator_skills_list = ["Machine Gun", "War Head", "Captain America", "Helicopter", "Drone", "Goliath"]
+        data = {
+            "player_id": self.player_id,
+            "assets": {
+                "skins": random.sample(skin_list, 3),
+                "operator_skills": random.sample(operator_skills_list, 3)
+            },
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        return data
 
-def create_game_assets():
-    pass
+# def create_game_assets():
+#     pass
 
 
 # assumptions
@@ -201,6 +213,9 @@ if __name__ == "__main__":
     # print(game_play.player_id)
     # print(game_play._random_game_mode())
 
+    game_asset = game_play.create_game_assets()
+    print(game_asset)
+
     num_sessions = 40
     for i in range(num_sessions):
         game_session = game_play.create_game_session()
@@ -208,5 +223,6 @@ if __name__ == "__main__":
         # print(game_play.xp)
         game_progression = game_play.log_player_progression()
         print(game_progression)
+
 
     # print(math.floor(compute_level(15)))

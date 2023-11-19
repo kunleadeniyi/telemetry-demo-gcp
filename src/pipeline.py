@@ -80,20 +80,6 @@ def map_dict_to_bq_schema(source_dict):
     return schema
 
 
-def check_schema(bigquery_schema: list, elem_schema: list):
-    output = False
-    if bigquery_schema == elem_schema:
-        output = True
-        return output
-
-    # print(f"ELEM SCHEMA: {elem_schema} \n type: {type(elem_schema)}")
-    if set(elem_schema).issubset(bigquery_schema):
-        output = True
-        return output
-
-    return output
-
-
 def check_table_exists(table_name):
     try:
         bq_client = bigquery.Client()
@@ -106,18 +92,9 @@ def check_table_exists(table_name):
         return None
 
 
-def generate_updated_schema(existing_schema, new_schema):
-    # Convert lists to tuples
-    existing_schema = tuple(existing_schema)
-    new_schema = tuple(new_schema)
-
-    # updated_schema = existing_schema + list(set(new_schema) - set(existing_schema))
-    updated_schema = existing_schema + tuple(set(new_schema) - set(existing_schema))
-    return list(updated_schema)
-
-
 # def schema_is_subset(existing_schema, new_schema):
 schema_cache = {}
+
 
 class Branch(beam.DoFn):
 
@@ -166,21 +143,6 @@ class Branch(beam.DoFn):
         self.schema_cache[table_name] = schema
         return schema
 
-    # def check_schema(self, bigquery_schema: list, elem_schema: list):
-    #     output = False
-    #     # output = True
-    #     if bigquery_schema == elem_schema:
-    #         output = True
-    #         return output
-    #
-    #     # print(f"ELEM SCHEMA: {elem_schema} \n type: {type(elem_schema)}")
-    #     if set(elem_schema).issubset(bigquery_schema):
-    #         # if all(x in bigquery_schema for x in elem_schema):
-    #         output = True
-    #         return output
-    #
-    #     return output
-
     def process(self, element):
         # edge case
         if (element.get("table_name") is None) or (element.get("data") is None):
@@ -200,19 +162,33 @@ class Branch(beam.DoFn):
                 # schema_check = table_object.schema == self.schema_cache.get(table_name)
 
                 if schema_check:
-                    # element['full_table_id'] = table_object.full_table_id
-                    element['table'] = table_object
+                    element['data']['full_table_id'] = table_object.full_table_id
+
+                    # element['table'] = table_object
+                    # yield pvalue.TaggedOutput(tag='okay_table_branch', value=element)
+
+                    # element = element['data']
+                    # table = element['table_name']
+
+                    # element = (f"{project_id}.{bigquery_dataset}.{table_name}", data)
+                    element = element['data']
                     yield pvalue.TaggedOutput(tag='okay_table_branch', value=element)
                 elif not schema_check:
                     # print("Modifying and attaching schema to element with key 'new_schema' ")
                     # new_schema = map_dict_to_bq_schema(data)
+
+                    element['data']['full_table_id'] = table_object.full_table_id
                     new_schema = self.map_dict_to_bq_schema(element)
+
                     schema_cache[table_name] = new_schema
                     element['new_schema'] = new_schema
                     element['table'] = table_object
+
                     yield pvalue.TaggedOutput(tag='modify_table_branch', value=element)
             else:  # create table
                 # print("Create table")
+                element['data']['full_table_id'] = f"{project_id}.{bigquery_dataset}.{element['table_name']}"
+
                 self.schema_cache[table_name] = map_dict_to_bq_schema(data)
                 yield pvalue.TaggedOutput(tag='create_table_branch', value=element)
 
@@ -233,18 +209,22 @@ class CreateTable(beam.DoFn):
             pass
 
         element['table'] = table
+
+        print(f"CreateTable DoFn called for table id: {table_id} - calling InsertToBQ function next")
         yield element
 
 
 class InsertToBQ(beam.DoFn):
     def process(self, element):
         # full_table_id = element['full_table_id']
-        table_id = f"{element['table'].dataset_id}.{element['table'].table_id}"
+        # table_id = f"{element['table'].project_id}.{element['table'].dataset_id}.{element['table'].table_id}"
+        table_id = element['table'].full_table_id.replace(':', '.')
         data = element['data']
 
         bq_client = bigquery.Client()
         try:
             # bq_client.insert_rows_json(full_table_id, [data])
+            print(f"InsertToBQ function call - table id: {table_id}")
             bq_client.insert_rows_json(table_id, [data])
             print(data)
         except Exception as e:
@@ -273,6 +253,7 @@ class ModifyTable(beam.DoFn):
             else:
                 updated_schema_objects.append(bigquery.SchemaField(*field_info[:3]))
 
+        print(f"Modify Table DoFn updated schema generation: {updated_schema_objects} ")
         return updated_schema_objects
 
     def process(self, element):
@@ -282,105 +263,27 @@ class ModifyTable(beam.DoFn):
         new_schema = element.get('new_schema')
         # modified_schema = generate_updated_schema(existing_schema, new_schema)
         modified_schema = self.generate_updated_schema(existing_schema, new_schema)
-        table.schema = modified_schema
+        # table.schema = modified_schema # moving this to the bottom after get_table
 
         # schema_cache[table.table_id] = table.schema
 
         bq_client = bigquery.Client()
+
+        # https://stackoverflow.com/questions/68362833/bigquery-patch-precondition-check-failed
+        table = bq_client.get_table(table.full_table_id.replace(':', '.'))  # to fix patch 412 precondition exception
+        table.schema = modified_schema
         table = bq_client.update_table(table, ['schema'])
-        print(f"ModifyTable DoFn Schema check: {existing_schema == new_schema}")
-        print(existing_schema)
-        print(new_schema)
+        # print(f"ModifyTable DoFn Schema check: {existing_schema == new_schema}")
+        # print(existing_schema)
+        # print(new_schema)
+        print(f"schema modified: new_schema - {table.schema}")
 
         yield element
         # print(f"Table schema updated to: \n{table.schema}") # change to logging event
 
-# def check_schema(table_name, source_dict):
-#     # get existing schema
-#     bq_client = bigquery.Client()
-#     dataset_id = bigquery_dataset
-#     table_id = f"{dataset_id}.{table_name}"
-#     # table = bq_client.get_table(table_id)
-#
-#     try:
-#         table = bq_client.get_table(table_id)  # Make an API request.
-#
-#         # check schema
-#         existing_schema = table.schema
-#
-#         # generate new schema
-#         new_schema = map_dict_to_bq_schema(source_dict['data'])
-#         # print(f"New Schema: {new_schema}")
-#
-#         if existing_schema == new_schema:
-#             return True
-#         # update below conditional to
-#         # - skip update if schema is a subset of new schema
-#         # - raise an exception if an existing column type is changed (we don't want to change column types)
-#
-#         else:
-#             return False
-#             # modified_schema = generate_updated_schema(existing_schema, new_schema)
-#             # table.schema = modified_schema
-#             # table = bq_client.update_table(table, ['schema'])
-#             # print(f"Table schema updated to: \n{table.schema}")
-#
-#     except NotFound as nf:
-#         print(f"Table {table_id} is not found.")
-#         print(f"Exception Raised: {nf}")
-
-
-# def dynamic_insert_to_bq(event):
-#     # check for necessary fields
-#     if "table_name" not in event or "data" not in event:
-#         print("event is missing required fields")
-#         return
-#
-#     # get table_name and data from event
-#     table_name = event["table_name"]
-#     data = event["data"]
-#
-#     bq_client = bigquery.Client()
-#
-#     dataset_id = bigquery_dataset
-#     table_id = f"{dataset_id}.{table_name}"
-#     table_ref = bq_client.dataset(dataset_id).table(table_name)
-#
-#     try:
-#         # table_ref = bq_client.dataset(dataset_id).table(table_name)
-#         # bq_client.get_table(table_ref)
-#         table = bq_client.get_table(table_id)
-#     except Exception as e:
-#         # print(bigquery_table_schemas[table_name])
-#         schema = map_dict_to_bq_schema(data)
-#
-#         table = bigquery.Table(table_ref=table_ref, schema=schema)
-#         table = bq_client.create_table(table=table)
-#
-#     try:
-#         bq_client.insert_rows_json(table_id, [data])
-#     except Exception as e:
-#         print(f"Error while inserting into table {e}") # change to logging event
-
-
-# def run():
-#     pipeline = beam.Pipeline(options=pipeline_options)
-#
-#     # subscription format -> projects/<project>/subscriptions/<subscription>
-#     read_from_pubsub = (
-#             pipeline | "Read from Pub/Sub"
-#             >> beam.io.ReadFromPubSub(subscription=f"projects/{project_id}/subscriptions/{subscription_name}"))
-#
-#     # parse_messages = read_from_pubsub | "Parse to JSON"
-#     # >> beam.Map(json_deserializer) # commented out because of json_deserializer import issues, replaced with line below
-#     parse_messages = read_from_pubsub | "Parse to JSON" >> beam.Map(lambda x: json.loads(x.decode('utf-8')))
-#
-#     write_to_bq = parse_messages | "Write to BigQuery Table" >> beam.ParDo(dynamic_insert_to_bq)
-#     parse_messages | beam.Map(print)
-#
-#     pipeline.run().wait_until_finish()
 
 def run():
+
     # with beam.Pipeline(options=pipeline_options) as pipeline:
     pipeline = beam.Pipeline(options=pipeline_options)
 
@@ -388,28 +291,17 @@ def run():
         pipeline
         | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(subscription=f"projects/{project_id}/subscriptions/{subscription_name}")
         | "Parse to JSON" >> beam.Map(lambda x: json.loads(x.decode('utf-8')))
+        # | "flatten" >> beam.Flatten()
+        # | "print" >> beam.Map(print)
     )
-
-    # experimenting with dynamic destinations
-    # def table_fn(element):
-    #     return f"{project_id}:{bigquery_dataset}.{element['table_name']}"
-    #
-    # parsed_data | 'WriteWithDynamicDestination' >> beam.io.WriteToBigQuery(
-    #     table_fn,
-    #     schema=lambda x: convert_to_beam_schema(x),
-    #     # table_side_inputs=(,),
-    #     write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
-    #     create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
-    #     method='STREAMING_INSERTS'
-    # )
 
     branches = (
         parsed_data
-        | 'Tagged branches' >> beam.ParDo(Branch()).with_outputs()  # .with_outputs("a", "b")
+        # | 'Tagged branches' >> beam.ParDo(Branch()).with_outputs()  # .with_outputs("a", "b")
+        | 'Tagged branches' >> beam.ParDo(Branch()).with_outputs()
         # | beam.Map(print)
     )
 
-    # print(branches)
     invalid = (
             branches.invalid_branch
             # | 'print invalid data' >>  beam.Map(print)
@@ -421,7 +313,14 @@ def run():
             branches.create_table_branch
             | 'create table' >> beam.ParDo(CreateTable())
             # | 'print create table' >> beam.Map(print)
-            | 'insert to new table' >> beam.ParDo(InsertToBQ())
+            # | 'insert to new table' >> beam.ParDo(InsertToBQ())
+            | 'Extract data' >> beam.Map(lambda element: element['data'])
+            | "write_after_create" >> beam.io.WriteToBigQuery(
+                table=lambda element: element['full_table_id'],
+                write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
+                create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
+                method='STREAMING_INSERTS'
+            )
     )
 
     modify = (
@@ -433,7 +332,20 @@ def run():
     )
 
     insert = (
-            branches.okay_table_branch | 'insert to table' >> beam.ParDo(InsertToBQ())
+            # extract_data
+            branches.okay_table_branch
+              # | beam.Map(print)
+            | "Write to BigQuery" >> beam.io.WriteToBigQuery(
+                table=lambda element: element['full_table_id'],
+                write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
+                create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
+                method='STREAMING_INSERTS'
+            )
+    )
+
+    errors = (
+            # result | beam.Map(print)
+        insert['FailedRows'] | "Failed Inserts" >> beam.Map(print)
     )
 
     pipeline.run().wait_until_finish()

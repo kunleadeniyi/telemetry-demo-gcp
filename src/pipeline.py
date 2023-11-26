@@ -6,9 +6,13 @@ from apache_beam.options.pipeline_options import GoogleCloudOptions
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound, Conflict
 
+# Imports the Cloud Logging client library
+import google.cloud.logging
+
 import datetime
 import os
 import json
+import logging
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -23,6 +27,15 @@ subscription_name = os.getenv("INPUT_SUB")
 gcp_bucket = os.getenv("GCP_BUCKET")
 # auth to google
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
+
+# Instantiates a client
+# gcp_logging_client = google.cloud.logging.Client()
+# gcp_logging_client.setup_logging()
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(message)s'
+)
 
 field_type = {
         str: 'STRING',
@@ -173,6 +186,7 @@ class Branch(beam.DoFn):
                     # element = (f"{project_id}.{bigquery_dataset}.{table_name}", data)
                     element = element['data']
                     yield pvalue.TaggedOutput(tag='okay_table_branch', value=element)
+                    logging.info(f"schema validation passed, data okay to insert \npcoll: {element}")
                 elif not schema_check:
                     # print("Modifying and attaching schema to element with key 'new_schema' ")
                     # new_schema = map_dict_to_bq_schema(data)
@@ -203,14 +217,14 @@ class CreateTable(beam.DoFn):
 
         try:
             table = bq_client.create_table(table)
-            print("Created table {}.{}.{}".format(table.project, table.dataset_id,
+            logging.info("Created table {}.{}.{}".format(table.project, table.dataset_id,
                                                   table.table_id))  # change to logging event
         except Conflict:  # to handle response 409 from big query
             pass
 
         element['table'] = table
 
-        print(f"CreateTable DoFn called for table id: {table_id} - calling InsertToBQ function next")
+        logging.debug(f"CreateTable DoFn called for table id: {table_id} - calling InsertToBQ function next")
         yield element
 
 
@@ -224,11 +238,11 @@ class InsertToBQ(beam.DoFn):
         bq_client = bigquery.Client()
         try:
             # bq_client.insert_rows_json(full_table_id, [data])
-            print(f"InsertToBQ function call - table id: {table_id}")
+            logging.debug(f"InsertToBQ function call - table id: {table_id}")
             bq_client.insert_rows_json(table_id, [data])
-            print(data)
+            logging.debug(f"data inserted: {data}")
         except Exception as e:
-            print(f"Encountered exception when inserting {data} to bigquery: {e}")  # change to logging event
+            logging.warning(f"Encountered exception when inserting {data} to bigquery: {e}")  # change to logging event
 
     # edge case
 
@@ -253,7 +267,7 @@ class ModifyTable(beam.DoFn):
             else:
                 updated_schema_objects.append(bigquery.SchemaField(*field_info[:3]))
 
-        print(f"Modify Table DoFn updated schema generation: {updated_schema_objects} ")
+        logging.info(f"Modify Table DoFn updated schema generation: {updated_schema_objects} ")
         return updated_schema_objects
 
     def process(self, element):
@@ -269,21 +283,26 @@ class ModifyTable(beam.DoFn):
 
         bq_client = bigquery.Client()
 
-        # https://stackoverflow.com/questions/68362833/bigquery-patch-precondition-check-failed
-        table = bq_client.get_table(table.full_table_id.replace(':', '.'))  # to fix patch 412 precondition exception
-        table.schema = modified_schema
-        table = bq_client.update_table(table, ['schema'])
-        # print(f"ModifyTable DoFn Schema check: {existing_schema == new_schema}")
-        # print(existing_schema)
-        # print(new_schema)
-        print(f"schema modified: new_schema - {table.schema}")
+        try:
+            # https://stackoverflow.com/questions/68362833/bigquery-patch-precondition-check-failed
+            table = bq_client.get_table(table.full_table_id.replace(':', '.'))  # to fix patch 412 precondition exception
+            table.schema = modified_schema
+            table = bq_client.update_table(table, ['schema'])
+            # print(f"ModifyTable DoFn Schema check: {existing_schema == new_schema}")
+            # print(existing_schema)
+            # print(new_schema)
+            logging.info(f"schema modified: new_schema - {table.schema}")
+            # print(f"Table schema updated to: \n{table.schema}") # change to logging event
+            yield element
+        except Exception as e:
+            logging.error(f"Error modifying schema: {e}")
 
-        yield element
-        # print(f"Table schema updated to: \n{table.schema}") # change to logging event
 
 
 def run():
 
+    gcp_logging_client = google.cloud.logging.Client()
+    gcp_logging_client.setup_logging()
     # with beam.Pipeline(options=pipeline_options) as pipeline:
     pipeline = beam.Pipeline(options=pipeline_options)
 
@@ -339,7 +358,8 @@ def run():
                 table=lambda element: element['full_table_id'],
                 write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
                 create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
-                method='STREAMING_INSERTS'
+                method='STREAMING_INSERTS',
+                insert_retry_strategy='RETRY_NEVER'
             )
     )
 

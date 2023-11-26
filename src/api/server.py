@@ -8,6 +8,9 @@ from google.cloud import pubsub_v1
 from dotenv import load_dotenv
 from google.api_core.exceptions import NotFound
 
+# Imports the Cloud Logging client library
+import google.cloud.logging
+
 load_dotenv()
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +26,10 @@ valid_pubsub = os.getenv("VALID_PUBSUB_TOPIC")
 invalid_pubsub = os.getenv("INVALID_PUBSUB_TOPIC")
 
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
+
+# Instantiates a client
+gcp_logging_client = google.cloud.logging.Client()
+gcp_logging_client.setup_logging()
 
 publisher = pubsub_v1.PublisherClient()
 valid_topic_path = publisher.topic_path(project_id, valid_pubsub)

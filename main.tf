@@ -1,93 +1,73 @@
 provider "google" {
-  credentials = "${file("credentials.json")}"
+  credentials = file("credentials.json")
 #   project = "idyllic-web-401116"
   project = "gcp-demo-telemetry"
   region = "europe-west2"
 }
 
-# resource "google_compute_instance" "demo-instance" {
-#   name = "terraform-instance"
-#   machine_type = "f1-micro"
-#   zone = "europe-west2-a"
-#   allow_stopping_for_update = true
+# Google cloud storage
+resource "google_storage_bucket" "storage-bucket" {
+  name = var.storage_bucket
+  location = var.location
+}
 
-#   boot_disk {
-#     initialize_params {
-#       image = "ubuntu-os-cloud/ubuntu-2004-lts"
-#     }
-#   }
-
-#   network_interface {
-#     network = "default"
-#     access_config {
-#       // necessary even if empty
-#     }
-#   }
-# }
-
-# Cloud run
-# resource "google_cloud_run_service" "demo-cloud-run-service" {
-#   name = "demo-cloud-run-service"
-#   location = "europe-west2"
-#   template {
-#     spec {
-#       containers {
-#         image = "node:latest"
-#       }
-#     }
-#   }
-# }
+# terraform backend
+#terraform {
+#  backend "gcs" {
+#    bucket = "gcp-demo-telemetry-terraform-backend"
+#    prefix  = "terraform/state"
+#  }
+#}
 
 # pub sub
-resource "google_pubsub_topic" "demo-valid-data" {
-  name = "demo-valid-data"
-  message_retention_duration = "86400s"
+resource "google_pubsub_topic" "valid-data-topic" {
+  name = var.valid_data_topic
+#  message_retention_duration = "86400s"
 }
 
-resource "google_pubsub_topic" "demo-invalid-data" {
-  name = "demo-invalid-data"
-}
-
-# Subscriptions for valid topic pub sub
-resource "google_pubsub_subscription" "demo-valid-data-sub" {
-  name = "demo-valid-data-sub"
-  topic = google_pubsub_topic.demo-valid-data.name
+resource "google_pubsub_topic" "invalid-data-topic" {
+  name = var.invalid_data_topic
 }
 
 # Subscriptions for valid topic pub sub
-resource "google_pubsub_subscription" "demo-default-valid-data-sub" {
-  name = "demo-default-valid-data-sub"
-  topic = google_pubsub_topic.demo-valid-data.name
+resource "google_pubsub_subscription" "valid-data-sub" {
+  name = var.valid_data_topic_default_subscription
+  topic = google_pubsub_topic.valid-data-topic.name
+  message_retention_duration = var.subscription_message_retention
+}
+
+# Subscriptions for valid topic pub sub
+resource "google_pubsub_subscription" "dataflow-valid-data-sub" {
+  name = var.valid_data_topic_subscription_for_dataflow
+  topic = google_pubsub_topic.valid-data-topic.name
+  message_retention_duration = var.subscription_message_retention
 }
 
 # Subscriptions for invalid topic pub sub
-resource "google_pubsub_subscription" "demo-default-invalid-data-sub" {
-  name = "demo-default-invalid-data-sub"
-  topic = google_pubsub_topic.demo-invalid-data.name
+resource "google_pubsub_subscription" "default-invalid-data-sub" {
+  name = var.invalid_data_topic_default_subscription
+  topic = google_pubsub_topic.invalid-data-topic.name
 }
 
-# Google cloud storage
-resource "google_storage_bucket" "demo-storage-bucket" {
-#   name = "demo-storage-bucket-401116"
-  name = "demo-gcp-telemetry-storage-bucket"
-  location = "europe-west2"
-}
-
-resource "google_bigquery_dataset" "demo-gbq-dataset" {
+resource "google_bigquery_dataset" "gbq-dataset" {
   # name only allows underscore
-  dataset_id = "demo_gbq_dataset"
+  dataset_id = var.valid_bigquery_dataset
+  location = var.location
   # delete_contents_on_destroy = true
 }
 
 # BigQuery Provision for invalid data
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_subscription#example-usage---pubsub-subscription-push-bq
-resource "google_bigquery_dataset" "demo-gbq-invalid-dataset" {
-  dataset_id = "demo_gbq_invalid_dataset"
+resource "google_bigquery_dataset" "gbq-invalid-dataset" {
+  dataset_id = var.invalid_bigquery_dataset
+  location = var.location
+  delete_contents_on_destroy = true
 }
 
-resource "google_bigquery_table" "demo-gbq-invalid-dataset-error-table" {
-  dataset_id = google_bigquery_dataset.demo-gbq-invalid-dataset.dataset_id
+resource "google_bigquery_table" "gbq-invalid-dataset-error-table" {
+  dataset_id = google_bigquery_dataset.gbq-invalid-dataset.dataset_id
   table_id = "errors"
+  deletion_protection = false
 
   schema = <<EOF
   [
@@ -123,15 +103,28 @@ resource "google_project_iam_member" "editor" {
 }
 
 # pubsub push to bigquery
-resource "google_pubsub_subscription" "demo-push-invalid-data-to-bq" {
-  name = "demo-push-invalid-data-to-bq"
-  topic = google_pubsub_topic.demo-invalid-data.name
+resource "google_pubsub_subscription" "push-invalid-data-to-bq" {
+  name = "push-invalid-data-to-bq"
+  topic = google_pubsub_topic.invalid-data-topic.name
 
   bigquery_config {
-    table = "${data.google_project.project.project_id}.${google_bigquery_table.demo-gbq-invalid-dataset-error-table.dataset_id}.${google_bigquery_table.demo-gbq-invalid-dataset-error-table.table_id}"
+    table = "${data.google_project.project.project_id}.${google_bigquery_table.gbq-invalid-dataset-error-table.dataset_id}.${google_bigquery_table.gbq-invalid-dataset-error-table.table_id}"
   }
 
   depends_on = [google_project_iam_member.viewer, google_project_iam_member.editor]
+}
+
+# notification channel
+resource "google_monitoring_notification_channel" "emails" {
+  for_each = { for email_details in var.emails : email_details.email => email_details }
+
+  type = each.value.type
+  display_name = each.value.display_name
+
+  labels = {
+    email_address = each.value.email
+  }
+  force_delete = true
 }
 # # Google Big Query Table (depends on GBQ dataset)
 # # valid table

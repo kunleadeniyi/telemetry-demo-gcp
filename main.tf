@@ -1,7 +1,7 @@
 provider "google" {
   credentials = file("credentials.json")
 #   project = "idyllic-web-401116"
-  project = "gcp-demo-telemetry"
+  project = var.project_id
   region = "europe-west2"
 }
 
@@ -126,6 +126,23 @@ resource "google_monitoring_notification_channel" "emails" {
   }
   force_delete = true
 }
+
+# create artifact registry repository to store container
+resource "google_artifact_registry_repository" "cloud-run-api-repo" {
+  location      = var.location
+  repository_id = var.cloud_run_api_repo.id
+  description   = var.cloud_run_api_repo.description
+  format        = var.cloud_run_api_repo.format
+}
+
+# artifact registry iam
+resource "google_project_iam_member" "artifact-registry-admin" {
+  project = data.google_project.project.project_id
+  role   = "roles/artifactregistry.admin"
+  member = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+}
+
+
 # # Google Big Query Table (depends on GBQ dataset)
 # # valid table
 # resource "google_bigquery_table" "demo-gbq-dataset-valid-table" {

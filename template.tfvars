@@ -1,3 +1,4 @@
+project_id = ""
 valid_data_topic = ""
 invalid_data_topic = ""
 valid_data_topic_default_subscription = ""
@@ -21,3 +22,21 @@ emails = [
     type="email"
   }
 ]
+
+cloud_run_api_repo = {
+  id = "" # Names may only contain lowercase letters, numbers and hyphens
+  description = "sample gcr repository from cloud run container images"
+  format = "DOCKER"
+}
+
+cloud_run_service = {
+  name = ""
+  cpu = ""
+  memory = ""
+}
+
+cloud_run_container_image = "[ARTIFACT_REGISTRY_LOCATION]-docker.pkg.dev/[PROJECT_ID]/[REPO_NAME]/[IMAGE]"
+
+# load balancer
+ssl = false
+domain = null

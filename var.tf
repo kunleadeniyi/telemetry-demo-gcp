@@ -1,3 +1,7 @@
+variable "project_id" {
+  type = string
+}
+
 variable "location" {
   type = string
   default = "europe-west2"
@@ -49,4 +53,43 @@ variable "emails" {
     email = string
     type = string
   }))
+}
+
+# load balancer variables
+variable "ssl" {
+  description = "Run load balancer on HTTPS and provision managed certificate with provided `domain`."
+  type = bool
+  default = true
+}
+
+variable "domain" {
+  description = "Domain name to run the load balancer on. Used if `ssl` is `true`."
+  type = string
+  default = "example.com"
+}
+
+variable "lb_name" {
+  description = "Name for load balancer and associated resources"
+  default = "tf-cr-lb"
+}
+
+# cloud run
+variable "cloud_run_api_repo" {
+  type = object({
+    id = string
+    description = string
+    format = string
+  })
+}
+
+variable "cloud_run_service" {
+  type = object({
+    name = string
+    cpu = string
+    memory = string
+  })
+}
+
+variable "cloud_run_container_image" {
+  type = string
 }

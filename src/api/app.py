@@ -63,13 +63,24 @@ def publish_message():
             logging.error(error)
             return jsonify({'error': error}), 400
 
+        if 'event_timestamp' not in body['data']:
+            error = 'Missing "event_timestamp" parameter'
+            invalid_data = {
+                "data": body,
+                "error": error,
+                "timestamp": datetime.datetime.now().timestamp()
+            }
+            publisher.publish(invalid_topic_path, data=json.dumps(invalid_data).encode('utf-8'))
+            logging.error(error)
+            return jsonify({'error': error}), 400
+
         logging.debug(request.headers)
         # add receive timestamp
-        body['data']['receive-timestamp'] = datetime.datetime.now().timestamp()
+        body['data']['api_timestamp'] = str(datetime.datetime.now())
+
         # get client IP
-        client_ip = None
-        if ('X-Forwarded-For' in request.headers.keys()):
-            client_ip = request.headers['X-Forwarded-For']
+        client_ip = request.headers['X-Forwarded-For'] if ('X-Forwarded-For' in request.headers.keys()) else ""
+
         # add client IP to message body
         body['data']['client_ip'] = client_ip
 
@@ -79,6 +90,7 @@ def publish_message():
         future = publisher.publish(valid_topic_path, data=json.dumps(body).encode())
         message_id = future.result()
 
+        # logging.info(f"message: {body}")
         return jsonify({'message_id': message_id}), 200
         # return jsonify({'message': body}), 200
 

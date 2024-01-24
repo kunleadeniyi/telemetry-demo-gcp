@@ -1,5 +1,5 @@
 provider "google" {
-  credentials = file("credentials.json")
+  credentials = file("../credentials.json")
 #   project = "idyllic-web-401116"
   project = var.project_id
   region = "europe-west2"
@@ -53,7 +53,7 @@ resource "google_bigquery_dataset" "gbq-dataset" {
   # name only allows underscore
   dataset_id = var.valid_bigquery_dataset
   location = var.location
-  # delete_contents_on_destroy = true
+   delete_contents_on_destroy = true
 }
 
 # BigQuery Provision for invalid data

@@ -1,6 +1,6 @@
 provider "google-beta" {
   project = var.project_id
-  credentials = file("credentials.json")
+  credentials = file("../credentials.json")
   region = var.location
 }
 

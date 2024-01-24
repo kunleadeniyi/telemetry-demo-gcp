@@ -368,4 +368,4 @@ if __name__ == '__main__':
     while True:
         generated_event = generate_event()
         send(generated_event)
-        time.sleep(2)
+        # time.sleep(1)

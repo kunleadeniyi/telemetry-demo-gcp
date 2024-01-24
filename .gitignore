@@ -1,7 +1,7 @@
 *tfstate*
 .terraform/*
 .env
-.terraform.lock.hcl
+terraform/.terraform.lock.hcl
 credentials*.json
 venv/
 src/__pycache__/

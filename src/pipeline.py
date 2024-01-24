@@ -63,27 +63,41 @@ pipeline_options = PipelineOptions(
     # , runner='DataFlowRunner',
     # staging_location=f"gs://{gcp_bucket}/dataflow_staging",
     # temp_location=f"gs://{gcp_bucket}/dataflow_temp", region="europe-west2",
-    # requirements_file="requirements.txt",
-    # setup_file="src/setup.py"
+    # requirements_file="../requirements.txt",
+    # # setup_file="src/setup.py"
 )
 
 
 # Function to take a dictionary and return a bigquery schema
 # https://stackoverflow.com/questions/56079925/autogenerating-bigquery-schema-from-python-dictionary
 def map_dict_to_bq_schema(source_dict):
+    """
+    Args:
+        source_dict: Equivalent to the element/message to be ingested. Format: dictionary
+
+    Returns:
+        An array suitable to pass for a Bigquery Schema
+    """
     # SchemaField list
     schema = []
-    # Iterate the existing dictionary
+
+    # Iterate through source_dict
     for key, value in source_dict.items():
         try:
-            schema_field = bigquery.SchemaField(key, field_type[type(value)])  # NULLABLE BY DEFAULT
+            # timestamps have to converted to strings to be json serialized
+            # if condition attaches appropriate timestamp format if timestamp is in the column name instead of string
+            if "timestamp" in key:
+                schema_field = bigquery.SchemaField(key, 'TIMESTAMP')
+            else:
+                schema_field = bigquery.SchemaField(key, field_type[type(value)])  # NULLABLE BY DEFAULT
         except KeyError:
             # We are expecting a REPEATED field
             if value and len(value) > 0:
                 schema_field = bigquery.SchemaField(key, field_type[type(value[0])], mode='REPEATED')  # REPEATED
 
         # Add the field to the list of fields
-        schema.append(schema_field)
+        if schema_field not in schema:  # if condition to fix weird bug where a key (field name) appears twice!! make no sense
+            schema.append(schema_field)
 
         # If it is a STRUCT / RECORD field we start the recursion
         if schema_field.field_type == 'RECORD':
@@ -119,7 +133,10 @@ class Branch(beam.DoFn):
         # Iterate the existing dictionary
         for key, value in nested_record.items():
             try:
-                schema_field = bigquery.SchemaField(key, field_type[type(value)])  # NULLABLE BY DEFAULT
+                if "timestamp" in key:
+                    schema_field = bigquery.SchemaField(key, 'TIMESTAMP')
+                else:
+                    schema_field = bigquery.SchemaField(key, field_type[type(value)])  # NULLABLE BY DEFAULT
             except KeyError:
                 # We are expecting a REPEATED field
                 if value and len(value) > 0:
@@ -137,7 +154,10 @@ class Branch(beam.DoFn):
         # Iterate the existing dictionary
         for key, value in element['data'].items():
             try:
-                schema_field = bigquery.SchemaField(key, field_type[type(value)])  # NULLABLE BY DEFAULT
+                if "timestamp" in key:
+                    schema_field = bigquery.SchemaField(key, 'TIMESTAMP')
+                else:
+                    schema_field = bigquery.SchemaField(key, field_type[type(value)]) # NULLABLE BY DEFAULT
             except KeyError:
                 # We are expecting a REPEATED field
                 if value and len(value) > 0:
@@ -216,11 +236,19 @@ class CreateTable(beam.DoFn):
         bq_client = bigquery.Client()
 
         try:
+            table.time_partitioning = bigquery.TimePartitioning(
+                type_=bigquery.TimePartitioningType.DAY,
+                # assumes all events are sent with event_timestamp field
+                field="event_timestamp",  # name of column to use for partitioning
+            )
+            table.require_partition_filter = True
             table = bq_client.create_table(table)
             logging.info("Created table {}.{}.{}".format(table.project, table.dataset_id,
                                                   table.table_id))  # change to logging event
         except Conflict:  # to handle response 409 from big query
             pass
+        except Exception as e:
+            logging.exception(f"Exception in Create Table: {e}")
 
         element['table'] = table
 
@@ -280,7 +308,8 @@ class ModifyTable(beam.DoFn):
         # table.schema = modified_schema # moving this to the bottom after get_table
 
         # schema_cache[table.table_id] = table.schema
-
+        print(existing_schema)
+        print(new_schema)
         bq_client = bigquery.Client()
 
         try:
@@ -298,7 +327,6 @@ class ModifyTable(beam.DoFn):
             logging.error(f"Error modifying schema: {e}")
 
 
-
 def run():
 
     gcp_logging_client = google.cloud.logging.Client()
@@ -308,8 +336,8 @@ def run():
 
     parsed_data = (
         pipeline
-        | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(subscription=f"projects/{project_id}/subscriptions/{subscription_name}")
-        | "Parse to JSON" >> beam.Map(lambda x: json.loads(x.decode('utf-8')))
+        | "Read_from_PubSub" >> beam.io.ReadFromPubSub(subscription=f"projects/{project_id}/subscriptions/{subscription_name}")
+        | "Parse_to_JSON" >> beam.Map(lambda x: json.loads(x.decode('utf-8')))
         # | "flatten" >> beam.Flatten()
         # | "print" >> beam.Map(print)
     )
@@ -317,23 +345,23 @@ def run():
     branches = (
         parsed_data
         # | 'Tagged branches' >> beam.ParDo(Branch()).with_outputs()  # .with_outputs("a", "b")
-        | 'Tagged branches' >> beam.ParDo(Branch()).with_outputs()
+        | 'Tagged_branches' >> beam.ParDo(Branch()).with_outputs()
         # | beam.Map(print)
     )
 
     invalid = (
             branches.invalid_branch
             # | 'print invalid data' >>  beam.Map(print)
-            | 'serialise to bytes' >> beam.Map(lambda x: json.dumps(x).encode('utf-8'))
-            | 'push to invalid Topic' >> beam.io.WriteToPubSub(topic=f"projects/{project_id}/topics/{invalid_pubsub}", )
+            | 'serialise_to_bytes' >> beam.Map(lambda x: json.dumps(x).encode('utf-8'))
+            | 'push_to_invalid_topic' >> beam.io.WriteToPubSub(topic=f"projects/{project_id}/topics/{invalid_pubsub}", )
     )
 
     create = (
             branches.create_table_branch
-            | 'create table' >> beam.ParDo(CreateTable())
+            | 'create_table' >> beam.ParDo(CreateTable())
             # | 'print create table' >> beam.Map(print)
             # | 'insert to new table' >> beam.ParDo(InsertToBQ())
-            | 'Extract data' >> beam.Map(lambda element: element['data'])
+            | 'extract_data' >> beam.Map(lambda element: element['data'])
             | "write_after_create" >> beam.io.WriteToBigQuery(
                 table=lambda element: element['full_table_id'],
                 write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
@@ -344,8 +372,8 @@ def run():
 
     modify = (
             branches.modify_table_branch
-            | 'modify table' >> beam.ParDo(ModifyTable())
-            | 'insert to modified table' >> beam.ParDo(InsertToBQ())
+            | 'modify_table' >> beam.ParDo(ModifyTable())
+            | 'insert_to_modified_table' >> beam.ParDo(InsertToBQ())
             # | 'print modify table' >> beam.Map(print)
 
     )
@@ -354,7 +382,7 @@ def run():
             # extract_data
             branches.okay_table_branch
               # | beam.Map(print)
-            | "Write to BigQuery" >> beam.io.WriteToBigQuery(
+            | "write_to_bigQuery" >> beam.io.WriteToBigQuery(
                 table=lambda element: element['full_table_id'],
                 write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
                 create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
@@ -365,7 +393,10 @@ def run():
 
     errors = (
             # result | beam.Map(print)
-        insert['FailedRows'] | "Failed Inserts" >> beam.Map(print)
+        insert['FailedRows']
+        | "Failed Inserts" >> beam.Map(print)
+        # | 'serialise_failed_writes' >> beam.Map(lambda x: json.dumps(x).encode('utf-8'))
+        # | 'push_failed_writes_to_invalid_topic' >> beam.io.WriteToPubSub(topic=f"projects/{project_id}/topics/{invalid_pubsub}", )
     )
 
     pipeline.run().wait_until_finish()
